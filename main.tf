@@ -1,3 +1,5 @@
+data "aws_region" "current" {}
+
 locals {
   # some ses resources don't allow for the terminating '.' in the domain name
   # so use a replace function to strip it out
@@ -5,6 +7,23 @@ locals {
 
   stripped_mail_from_domain = replace(var.mail_from_domain, "/[.]$/", "")
   dash_domain               = replace(var.domain_name, ".", "-")
+
+  # Not all AWS Regions use the default SES DKIM domain, dkim.amazonses.com
+  # to see if your region uses a region specific DKIM domain
+  # check the DKIM domains table in the AWS General Reference.
+  # https://docs.aws.amazon.com/ses/latest/dg/regions.html#region-dkim
+  # https://docs.aws.amazon.com/general/latest/gr/ses.html#ses_dkim_domains
+  dkim_region = contains(
+    [
+      "af-south-1",
+      "ap-southeast-3",
+      "ap-northeast-3",
+      "eu-south-1",
+      "il-central-1",
+      "us-gov-east-1"
+    ],
+    data.aws_region.current.name
+  ) ? "dkim.${data.aws_region.current.name}.amazonses.com" : "dkim.amazonses.com"
 }
 
 #
@@ -26,7 +45,7 @@ resource "aws_route53_record" "dkim" {
   name    = "${aws_sesv2_email_identity.main.dkim_signing_attributes[0].tokens[count.index]}._domainkey"
   type    = "CNAME"
   ttl     = "600"
-  records = ["${aws_sesv2_email_identity.main.dkim_signing_attributes[0].tokens[count.index]}.dkim.amazonses.com"]
+  records = ["${aws_sesv2_email_identity.main.dkim_signing_attributes[0].tokens[count.index]}.${local.dkim_region}"]
 
   depends_on = [aws_sesv2_email_identity.main]
 }
@@ -54,9 +73,6 @@ resource "aws_route53_record" "spf_mail_from" {
 }
 
 # Sending MX Record
-data "aws_region" "current" {
-}
-
 resource "aws_route53_record" "mx_send_mail_from" {
   zone_id = var.route53_zone_id
   name    = aws_sesv2_email_identity_mail_from_attributes.main.mail_from_domain
